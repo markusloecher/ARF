@@ -386,7 +386,9 @@ get the ‘population count’ right, it can be remarkably deceptive when it
 comes to the actual shape of the data?</p>
 <div id="systematic-comparison-via-dgp" class="section level2">
 <h2>Systematic Comparison via DGP</h2>
-<p>Here’s a DGP with a distinct distribution for each group:</p>
+<p>The goal is benchmarking ARF against a ground-truth Titanic
+simulation, Here’s a DGP with a distinct distribution for each
+group:</p>
 <div id="what-each-group-stress-tests-in-arf" class="section level3">
 <h3>What each group stress-tests in ARF</h3>
 <table>
@@ -426,12 +428,12 @@ comes to the actual shape of the data?</p>
 <tr class="odd">
 <td>female/3</td>
 <td>Gamma</td>
-<td>Moderate skew, unimodal — ARF’s easiest case</td>
+<td>Moderate skew, unimodal — ARF’s 2nd easiest case</td>
 </tr>
 <tr class="even">
 <td>male/3</td>
 <td>Spike + gamma tail</td>
-<td>Bimodal with very different scales</td>
+<td>very different scales</td>
 </tr>
 </tbody>
 </table>
@@ -445,12 +447,9 @@ concentration near £5 in the power law.</p>
 <pre class="r"><code># This produces the data frame used for plotting
 
 # Use the manual empirical route
-grid_manual &lt;- gen_ll_grid_th_margs(sim_data, arf_fit)</code></pre>
-<pre><code>## Warning: There was 1 warning in `mutate()`.
-## ℹ In argument: `arf_ll = lik(...)`.
-## Caused by warning:
-## ! executing %dopar% sequentially: no parallel backend registered</code></pre>
-<pre class="r"><code># Generate the ggplot object
+grid_manual &lt;- gen_ll_grid_th_margs(sim_data, arf_fit)
+
+# Generate the ggplot object
 p_densities &lt;- plot_density_comparison(sim_data, grid_manual)
 
 # Display the plot
