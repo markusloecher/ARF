@@ -1,0 +1,139 @@
+---
+title: "Reweighted PFI"
+author: "ML"
+date: "2026-03-30"
+output: 
+  html_document:
+    toc: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#library(partykit)
+library(ranger)
+#library(pdp)
+#library(mgcv)
+#library(xplainfi)
+library(mlr3learners)
+library(arf)
+rerun = FALSE
+source("utils.R")
+set.seed(123)
+```
+
+When we use Adversarial Random Forests (ARF) for density estimation, we often take the resulting 'boxes' for granted, but how closely do these piece-wise estimates actually mirror the underlying truth? I put ARF to the test against a known Data Generating Process, specifically examining how the quality of conditional density estimation fluctuates when faced with different distributional geometries—from simple uniforms to complex power laws. The results suggest that while the forest might get the 'population count' right, it can be remarkably deceptive when it comes to the actual shape of the data?
+
+## Systematic Comparison via DGP
+
+Here's a DGP with a distinct distribution for each group:
+
+### What each group stress-tests in ARF
+
+| Group | Distribution | ARF challenge |
+|---|---|---|
+| female/1 | Bimodal Gaussian | Valley between modes on linear scale |
+| male/1 | Unimodal normal | none ? |
+| female/2 | Power law (1/x²) | Extreme skew, mass near lower bound |
+| male/2 | Uniform | Flat density — ARF leaf Gaussians will over-smooth edges |
+| female/3 | Gamma | Moderate skew, unimodal — ARF's easiest case |
+| male/3 | Spike + gamma tail | Bimodal with very different scales |
+  
+  
+The uniform and power law cases are particularly interesting diagnostics — ARF's truncated normal leaves will visibly over-smooth the sharp edges of the uniform, and will struggle with the extreme mass concentration near £5 in the power law.
+
+```{r, echo = FALSE, message=FALSE}
+
+# ============================================================
+# RUN EVERYTHING
+# ============================================================
+
+if (rerun){
+  sim_data  <- simulate_titanic_dgp(n = 1000)
+  arf_fit   <- fit_arf(sim_data)
+  save(sim_data, arf_fit, file = "arf_sims.rda")
+} else {
+  load("arf_sims.rda")
+}
+```
+
+### Conditional Density via Joint divided by manual Marginals
+
+```{r}
+# This produces the data frame used for plotting
+
+# Use the manual empirical route
+grid_manual <- gen_ll_grid_th_margs(sim_data, arf_fit)
+
+# Generate the ggplot object
+p_densities <- plot_density_comparison(sim_data, grid_manual)
+
+# Display the plot
+print(p_densities)
+
+```
+
+To account for varying scales across passenger classes, we calculated two metrics 
+
+### 1. Integrated Absolute Error (IAE)
+This is the most intuitive "single number" for your plot. It represents the total area between the red and blue curves.
+* **Interpretation:** A value of 0 means a perfect match. A value of 2 means the two distributions do not overlap at all.
+* **Formula:** $\int |f_{true}(x) - \hat{f}_{arf}(x)| dx$
+
+### 2. the Total Variation Distance (TVD). 
+
+$$\text{Relative Error} = \frac{\int |f_{true}(x) - \hat{f}_{arf}(x)| dx}{\int f_{true}(x) dx + \int \hat{f}_{arf}(x) dx}$$
+Since the area under a true density is always 1, if the ARF is also properly normalized, this should be just **IAE / 2**.
+  
+  
+For the unimodal Male 1 group, the discrepancy was extreme (IAE 9.44), revealing that the model's calibration of group marginals is highly unreliable. Even in more stable groups like Male 2, the TVD remained above 0.35, indicating that over a third of the predicted probability mass was misplaced relative to the true distribution.
+
+
+```{r}
+m = IAE(grid_manual)
+
+print("IAE:")
+print(m$IAE,2)
+print("TVD:")
+print(m$TVD)
+```
+
+
+### Increasing Sample Size
+
+Maybe ARF just needs more data ?
+
+```{r}
+if (rerun){
+  sim_data  <- simulate_titanic_dgp(n = 5000)
+  arf_fit   <- fit_arf(sim_data)
+  save(sim_data, arf_fit, file = "arf_sims_5000.rda")
+} else {
+  load("arf_sims_5000.rda")
+}
+
+grid_manual <- gen_ll_grid_th_margs(sim_data, arf_fit)
+
+# Generate the ggplot object
+p_densities <- plot_density_comparison(sim_data, grid_manual)
+
+# Display the plot
+print(p_densities)
+```
+
+
+
+### Conditional Density directly from ARF 
+
+The following code does not work for me 
+
+```{r, eval = F}
+# Use the direct ARF conditional route
+grid_arf <- gen_ll_grid(sim_data, arf_fit, use_arf_conditional = TRUE)
+
+p_densities <- plot_density_comparison(sim_data, grid_arf)
+
+# Display the plot
+print(p_densities)
+```
+
+
