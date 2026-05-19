@@ -101,11 +101,12 @@ true_log_lik <- function(data) {
 # 3. FITTING & GRID GENERATION
 # ============================================================
 
-fit_arf <- function(data, num.trees = 100, min.node.size = 10, seed = 42,...) {
+fit_arf <- function(data, num.trees = 100, min.node.size = 10, 
+                    seed = 42, finite_bounds = c("no", "local", "global")[2], ...) {
   set.seed(seed)
   X   <- data[, c("male", "Pclass", "Fare")]
   arf  <- adversarial_rf(X, num_trees = num.trees, min_node_size = min.node.size,...)
-  psi  <- forde(arf, X)
+  psi  <- forde(arf, X, finite_bounds = finite_bounds)
   list(arf = arf, psi = psi, X = X)
 }
 
