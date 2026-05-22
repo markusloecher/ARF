@@ -1,0 +1,322 @@
+---
+title: "No more dividing likelihoods !"
+author: "Loecher"
+date: "2026-05-20"
+output: 
+  html_document:
+    toc: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, cache = F)
+
+library(ranger)
+library(mlr3learners)
+library(arf)
+library(ggpubr)
+library(ggplot2)
+
+source("utils.R")
+genData = F
+set.seed(123)
+n_samples = 10000
+num_trees = 200L
+min_node_size = 20
+```
+
+## Systematic Comparison via DGP
+
+The goal is benchmarking ARF against a ground-truth Titanic simulation, 
+Here's a DGP with a distinct distribution for each group:
+
+### What each group stress-tests in ARF
+
+| Group | Distribution | ARF challenge |
+|---|---|---|
+| female/1 | Bimodal Gaussian | Valley between modes on linear scale |
+| male/1 | Bimodal Log Normal | Very difficult
+| female/2 | Power law (1/x²) | Extreme skew, mass near lower bound |
+| male/2 | Uniform | Flat density — ARF leaf Gaussians will over-smooth edges |
+| female/3 | Gamma | Moderate skew, unimodal — ARF's 2nd easiest case |
+| male/3 | Spike + gamma tail |  very different scales |
+  
+  
+The uniform and power law cases are particularly interesting diagnostics — ARF's truncated normal leaves will visibly over-smooth the sharp edges of the uniform, and will struggle with the extreme mass concentration near £5 in the power law.
+
+
+Global Parameters:
+
+- N = `r n_samples`
+- n_trees = `r num_trees`
+- min_node_size = `r min_node_size`
+
+
+```{r}
+if (genData) 
+  sim_data <- as.data.table(simulate_titanic_dgp(n = n_samples, seed = NULL))[, -"male"]
+#hist(sim_data[Pclass == 1 & sex == "female", Fare], nclass = 30)
+#hist(syn_data$Fare, nclass = 30)
+```
+
+```{r, eval=F,echo=F}
+library(ggplot2)
+x1 = cbind.data.frame(Fare = sim_data[Pclass == 1 & sex == "female", Fare], type= "original", Pclass = 1, sex = "female")
+x2 = cbind.data.frame(Fare = syn_data$Fare, type= "synthetic",  Pclass = 1, sex = "female")
+x = rbind.data.frame(x1,x2)
+ggplot(x, aes(x=Fare, fill = type)) + geom_histogram(alpha=0.5) #+ facet_wrap(~ type)
+```
+
+```{r}
+
+CondDensityEstimator = function(mtry=2, lik_grid = 300, 
+                                num_trees = 100,
+                                min_node_size = 20,
+                                finite_bounds = "local",
+                                arf = NULL){
+  if (is.null(arf)) arf <- adversarial_rf(sim_data, mtry = mtry, num_trees = num_trees, min_node_size = min_node_size)
+  
+  params <- forde(arf, sim_data, finite_bounds = finite_bounds)
+
+  allData = allLiks = NULL
+  for (p in 1:3){
+    for (s in c("female", "male")){
+      syn_data <- forge(params, evidence = data.table(Pclass = p, sex = s),
+                 n_synth = sim_data[Pclass == "3", .N])
+      x1 = cbind.data.frame(Fare = sim_data[Pclass == p & sex == s, Fare], type= "original", Pclass = p, sex = s)
+      x2 = cbind.data.frame(Fare = syn_data$Fare, type= "synthetic",  Pclass = p, sex = s)
+      x = rbind.data.frame(x1,x2)
+      allData = rbind.data.frame(allData,x)
+      ################################################
+      if (lik_grid > 0){ # also compute the likelihoods and densities
+        psi = params
+        fares  <- exp(seq(log(1), log(300), length.out = lik_grid))
+        #browser()
+        ll <- lik(psi, data.table(Fare = fares) , arf = arf, evidence = data.table(Pclass = p, sex = s), log = TRUE)
+        l_syn <- cbind.data.frame(Fare = fares, likelihood = exp(ll), type= "synthetic",  Pclass = p, sex = s)
+        l_orig = cbind.data.frame(Fare = fares, likelihood = get_cond_density(fares,pclass = p, sex = s), type= "original",  Pclass = p, sex = s)
+        
+        l = rbind.data.frame(l_syn, l_orig)
+        allLiks = rbind.data.frame(allLiks,l)
+      }
+    }
+  }
+
+  return(list(hist = allData, lik = allLiks, arf = arf))
+}
+
+
+ plotHists = function(allData, commonAxis = TRUE){
+   if (commonAxis){
+     g = ggplot(allData, aes(x=Fare, y=after_stat(density), fill = type)) + geom_histogram(alpha=0.5,
+                 position="identity") + facet_wrap(~ Pclass + sex, scales = "free")
+   } else {
+     #heavy tails: female/2 male/3 male/1
+     idx = (allData$Pclass == 2 & allData$sex == "female") | (allData$Pclass == 3 & allData$sex == "male") | (allData$Pclass == 1 & allData$sex == "male")
+     LightTails = allData[!idx,]
+     HeavyTails = allData[idx,]
+     g1 = ggplot(LightTails, aes(x=Fare, y=after_stat(density), fill = type)) + geom_histogram(alpha=0.5,
+                 position="identity") + facet_wrap(~ Pclass + sex, scales = "free") 
+     g2 = ggplot(HeavyTails, aes(x=Fare, y=after_stat(density), fill = type)) + geom_histogram(alpha=0.5,
+                 position="identity") + facet_wrap(~ Pclass + sex, scales = "free") + scale_x_log10()
+     g = ggarrange(g1,g2, ncol=1, labesl = c("Linear scale", "Log scale"))
+   }
+  
+   return(g) 
+ }
+
+ plotLiks = function(allData, commonAxis = TRUE){
+   allData$type = factor(allData$type, levels = c("synthetic", "original"))
+   if (commonAxis){
+     g = ggplot(allData, aes(x=Fare, y=likelihood, colour  = type)) + geom_line(linewidth = 0.9) + facet_wrap(~ Pclass + sex, scales = "free")
+   } else {
+     #heavy tails: female/2 male/3
+     idx = (allData$Pclass == 2 & allData$sex == "female") | (allData$Pclass %in% c(1,3) & allData$sex == "male")
+     LightTails = allData[!idx,]
+     HeavyTails = allData[idx,]
+     g1 = ggplot(LightTails, aes(x=Fare, y=likelihood, colour = type)) + geom_line(linewidth = 0.9) + facet_wrap(~ Pclass + sex, scales = "free") 
+     g2 = ggplot(HeavyTails, aes(x=Fare, y=likelihood, colour = type)) + geom_line(linewidth = 0.9)+ facet_wrap(~ Pclass + sex, scales = "free") + scale_x_log10()
+     g = ggarrange(g1,g2, ncol=1, labesl = c("Linear scale", "Log scale"))
+   }
+  
+   return(g) 
+ }
+```
+
+# finite_bounds = "local"
+
+This seems to make a huge difference
+
+```{r genData}
+if (genData){
+  print("estimating ARFs")
+  allData1 = CondDensityEstimator(1,num_trees = num_trees, min_node_size=min_node_size);print("mtry 1 done")
+  allData2 = CondDensityEstimator(2,num_trees = num_trees, min_node_size=min_node_size);print("mtry 2 done")
+  allData3 = CondDensityEstimator(3,num_trees = num_trees, min_node_size=min_node_size);print("mtry 3 done")
+  save.image("allData.rda")
+} else {
+  genDataOrig = genData
+  load("allData.rda")
+  genData = genDataOrig
+}
+```
+
+## mtry = 1
+
+This is effectively randomized trees.
+
+### Data Generation
+
+```{r hist1, warning = FALSE, message = FALSE, results = F, fig.width=10, fig.height=8}
+g1 = plotHists(allData1$hist,F)
+print(g1)
+```
+
+### Likelihood Densities
+
+
+```{r lik1, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+g1 = plotLiks(allData1$lik,F)
+print(g1)
+```
+## Forest Diagnostics
+
+.e.g how big are the leafs ?
+
+
+## mtry = 2
+
+### Data Generation
+
+```{r hist2, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+g2 = plotHists(allData2$hist,F)
+print(g2)
+```
+
+### Likelihood Densities
+
+
+```{r lik2, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+g2 = plotLiks(allData2$lik,F)
+print(g2)
+```
+
+## mtry = 3
+
+This is effectively bagging.
+
+### Data Generation
+
+```{r hist3, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+g3 = plotHists(allData3$hist,F)
+print(g3)
+```
+
+### Likelihood Densities
+
+
+```{r lik3, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+g3 = plotLiks(allData3$lik,F)
+print(g3)
+```
+
+
+----------------------------------------
+
+# default finite_bounds ("no")
+
+This was my original try
+
+```{r genData_no}
+if (genData){
+  print("estimating ARFs")
+  allData1_no = CondDensityEstimator(1,num_trees = num_trees, min_node_size=min_node_size, finite_bounds = "no");print("mtry 1 done")
+  allData2_no = CondDensityEstimator(2,num_trees = num_trees, min_node_size=min_node_size, finite_bounds = "no");print("mtry 2 done")
+  allData3_no = CondDensityEstimator(3,num_trees = num_trees, min_node_size=min_node_size, finite_bounds = "no");print("mtry 3 done")
+  save.image("allData.rda")
+} else {
+  genDataOrig = genData
+  load("allData.rda")
+  genData = genDataOrig
+}
+```
+
+## mtry = 1
+
+This is effectively randomized trees.
+
+### Data Generation
+
+```{r hist1_no, warning = FALSE, message = FALSE, results = F, fig.width=10, fig.height=8}
+g1 = plotHists(allData1_no$hist,F)
+print(g1)
+```
+
+### Likelihood Densities
+
+
+```{r lik1_no, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+g1 = plotLiks(allData1_no$lik,F)
+print(g1)
+```
+
+## mtry = 2
+
+### Data Generation
+
+```{r hist2_no, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+g2 = plotHists(allData2_no$hist,F)
+print(g2)
+```
+
+### Likelihood Densities
+
+
+```{r lik2_no, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+g2 = plotLiks(allData2_no$lik,F)
+print(g2)
+```
+
+## mtry = 3
+
+This is effectively bagging.
+
+### Data Generation
+
+```{r hist3_no, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+g3 = plotHists(allData3_no$hist,F)
+print(g3)
+```
+
+### Likelihood Densities
+
+
+```{r lik3_no, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+g3 = plotLiks(allData3_no$lik,F)
+print(g3)
+```
+
+
+----------------------------------------------
+
+# Conclusions
+
+* Uniform density seems hardest
+* Higher `mtry` -> better fit initially followed by "overfitting" of the likelihood.
+* The extreme lack of smoothness of the likelihoods is not really visible in the histograms.
+* Using the `evidence` argument in `lik()` is MUCH superior to dividing by the marginal likelihoods
+  * With hindsight it seems clear why: the marginal likelihoods are likely (no pun) also very noisy; dividing by small, noisy numbers will lead to amplified noise.
+* `finite_bounds` does not seem to matter much after all
+
+# Outlook
+
+* Can we efficiently and soundly smooth the likelihoods ? Could hierarchical shrinkage play a role ? (Just increasing `num_trees` does not seem to be enough)
+* How can one better approximate a uniform distribution ? Maybe expand the local basis functions ?
+* Can we tune mtry ?
+* 
+
+
+
+```{r}
+#if (genData) save.image("allData.rda")
+```
+

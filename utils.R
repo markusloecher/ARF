@@ -16,8 +16,8 @@ DGP_CONFIG <- list(
   # Conditional Fare Logic: f(Fare | Sex, Pclass)
   rules = list(
     "female 1" = list(type = "bimodal_norm",  m1=50,  s1=8,    m2=200, s2=20,  w1=0.5),
-    "male 1" = list(type = "unimodal_norm",  m=50,  s=10),
-    #"male 1"   = list(type = "bimodal_lnorm", m1=log(50), s1=0.2, m2=log(250), s2=0.2, w1=0.5),
+    #"male 1" = list(type = "unimodal_norm",  m=50,  s=10),
+    "male 1"   = list(type = "bimodal_lnorm", m1=log(50), s1=0.2, m2=log(200), s2=0.2, w1=0.5),
     "female 2" = list(type = "power_law",     x_min=5, x_max=500),
     "male 2"   = list(type = "uniform",       min=5,   max=150),
     "female 3" = list(type = "gamma",         shape=2, rate=2/20),
