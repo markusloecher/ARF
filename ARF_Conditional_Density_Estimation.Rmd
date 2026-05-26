@@ -5,10 +5,11 @@ date: "2026-05-20"
 output: 
   html_document:
     toc: True
+    toc_depth: 2
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, cache = F)
+knitr::opts_chunk$set(echo = F, message = F, warning = F, cache = F)
 
 library(ranger)
 library(mlr3learners)
@@ -101,7 +102,7 @@ CondDensityEstimator = function(mtry=2, lik_grid = 300,
     }
   }
 
-  return(list(hist = allData, lik = allLiks, arf = arf))
+  return(list(hist = allData, lik = allLiks, arf = arf, psi = params))
 }
 
 
@@ -166,7 +167,7 @@ This is effectively randomized trees.
 
 ### Data Generation
 
-```{r hist1, warning = FALSE, message = FALSE, results = F, fig.width=10, fig.height=8}
+```{r hist1, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g1 = plotHists(allData1$hist,F)
 print(g1)
 ```
@@ -174,7 +175,7 @@ print(g1)
 ### Likelihood Densities
 
 
-```{r lik1, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+```{r lik1, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g1 = plotLiks(allData1$lik,F)
 print(g1)
 ```
@@ -187,7 +188,7 @@ print(g1)
 
 ### Data Generation
 
-```{r hist2, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+```{r hist2, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g2 = plotHists(allData2$hist,F)
 print(g2)
 ```
@@ -195,7 +196,7 @@ print(g2)
 ### Likelihood Densities
 
 
-```{r lik2, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+```{r lik2, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g2 = plotLiks(allData2$lik,F)
 print(g2)
 ```
@@ -206,7 +207,7 @@ This is effectively bagging.
 
 ### Data Generation
 
-```{r hist3, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+```{r hist3, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g3 = plotHists(allData3$hist,F)
 print(g3)
 ```
@@ -214,7 +215,7 @@ print(g3)
 ### Likelihood Densities
 
 
-```{r lik3, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+```{r lik3, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g3 = plotLiks(allData3$lik,F)
 print(g3)
 ```
@@ -246,7 +247,7 @@ This is effectively randomized trees.
 
 ### Data Generation
 
-```{r hist1_no, warning = FALSE, message = FALSE, results = F, fig.width=10, fig.height=8}
+```{r hist1_no, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g1 = plotHists(allData1_no$hist,F)
 print(g1)
 ```
@@ -254,7 +255,7 @@ print(g1)
 ### Likelihood Densities
 
 
-```{r lik1_no, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+```{r lik1_no, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g1 = plotLiks(allData1_no$lik,F)
 print(g1)
 ```
@@ -263,7 +264,7 @@ print(g1)
 
 ### Data Generation
 
-```{r hist2_no, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+```{r hist2_no, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g2 = plotHists(allData2_no$hist,F)
 print(g2)
 ```
@@ -271,7 +272,7 @@ print(g2)
 ### Likelihood Densities
 
 
-```{r lik2_no, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+```{r lik2_no, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g2 = plotLiks(allData2_no$lik,F)
 print(g2)
 ```
@@ -282,7 +283,7 @@ This is effectively bagging.
 
 ### Data Generation
 
-```{r hist3_no, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+```{r hist3_no, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g3 = plotHists(allData3_no$hist,F)
 print(g3)
 ```
@@ -290,9 +291,27 @@ print(g3)
 ### Likelihood Densities
 
 
-```{r lik3_no, warning = FALSE, message = FALSE, fig.width=10, fig.height=8}
+```{r lik3_no, warning = FALSE, message = FALSE, results = "hide", fig.width=10, fig.height=8}
 g3 = plotLiks(allData3_no$lik,F)
 print(g3)
+```
+
+## Diagnostics
+
+#### Leaf Sizes
+
+(Here, I am assuming that sample size multiplied by the "coverage" of the `forest` object returned by `forde` is the leaf size..) 
+
+
+```{r}
+l1 = cbind.data.frame(leafSize = allData1$psi$forest$cvg*n_samples, mtry=1)
+l2 = cbind.data.frame(leafSize = allData2$psi$forest$cvg*n_samples, mtry=2)
+l3 = cbind.data.frame(leafSize = allData3$psi$forest$cvg*n_samples, mtry=3)
+ls = rbind.data.frame(l1,l2,l3)
+ls$mtry = factor(ls$mtry)
+
+#boxplot(leafSize ~ mtry, data = ls)
+ggplot(ls, aes(x=mtry, y = leafSize)) + geom_boxplot() + scale_y_log10() #+ scale_y_sqrt()
 ```
 
 
@@ -307,12 +326,7 @@ print(g3)
   * With hindsight it seems clear why: the marginal likelihoods are likely (no pun) also very noisy; dividing by small, noisy numbers will lead to amplified noise.
 * `finite_bounds` does not seem to matter much after all
 
-# Outlook
 
-* Can we efficiently and soundly smooth the likelihoods ? Could hierarchical shrinkage play a role ? (Just increasing `num_trees` does not seem to be enough)
-* How can one better approximate a uniform distribution ? Maybe expand the local basis functions ?
-* Can we tune mtry ?
-* 
 
 
 
